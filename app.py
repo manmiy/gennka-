@@ -73,9 +73,13 @@ def check_password() -> bool:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("### 🔒 アクセス認証")
-        password_input = st.text_input("パスワードを入力してください", type="password")
+        password_input = st.text_input(
+            "パスワードを入力してください", type="password", key="login_password_input"
+        )
 
-        if st.button("ログイン", use_container_width=True, type="primary"):
+        if st.button(
+            "ログイン", use_container_width=True, type="primary", key="login_button"
+        ):
             if password_input == "sto0123":
                 st.session_state.authenticated = True
                 st.success("認証に成功しました")
@@ -107,7 +111,7 @@ def sidebar_settings():
     st.sidebar.markdown("## ⚙️ 設定")
 
     # ログアウトボタン
-    if st.sidebar.button("🚪 ログアウト"):
+    if st.sidebar.button("🚪 ログアウト", key="logout_button"):
         st.session_state.authenticated = False
         st.rerun()
 
@@ -130,6 +134,7 @@ def sidebar_settings():
             "Vertex AIのリージョンを選択してください。"
             "Gemini 3.x系モデル（gemini-3.5-flash-lite等）は global リージョンでのみ利用可能です。"
         ),
+        key="region_select",
     )
 
     # 1. Streamlit Secretsからの自動認証試行
@@ -150,15 +155,19 @@ def sidebar_settings():
             "サービスアカウント JSON ファイル",
             type=["json"],
             help="Google CloudのサービスアカウントJSONキーファイルをアップロードしてください",
+            key="credentials_file_uploader",
         )
 
         project_id_input = st.text_input(
             "プロジェクトID",
             value="",
             help="Google CloudのプロジェクトIDを入力してください",
+            key="manual_project_id_input",
         )
 
-        if st.button("🔐 手動認証する", use_container_width=True):
+        if st.button(
+            "🔐 手動認証する", use_container_width=True, key="manual_auth_button"
+        ):
             if credentials_file is None:
                 st.sidebar.error("JSONファイルをアップロードしてください")
             elif not project_id_input:
@@ -193,6 +202,7 @@ def sidebar_settings():
             "Vertex AIのモデルは定期的に廃止されます。"
             "404エラーが出た場合はここで別のモデルに切り替えてください。"
         ),
+        key="model_select",
     )
 
     st.sidebar.markdown("---")
@@ -203,6 +213,7 @@ def sidebar_settings():
         "同じ品名の数量・金額を集約する",
         value=False,
         help="チェックすると同じ品名の行を1行にまとめ、数量と金額を合計します",
+        key="aggregate_checkbox",
     )
 
     return aggregate, model_name
@@ -230,6 +241,7 @@ def main():
         type=["pdf", "png", "jpg", "jpeg"],
         accept_multiple_files=True,
         help="PDF、PNG、JPG形式に対応しています。複数ファイルを同時にアップロードできます。",
+        key="invoice_file_uploader",
     )
 
     if uploaded_files:
@@ -259,6 +271,7 @@ def main():
             disabled=not uploaded_files or not st.session_state.vertex_initialized,
             use_container_width=True,
             type="primary",
+            key="ocr_run_button",
         )
 
     if ocr_button and uploaded_files:
@@ -388,7 +401,9 @@ def main():
             with col_d1:
                 today = datetime.now().strftime("%Y%m%d")
                 default_filename = f"原価管理表_{today}.xlsx"
-                filename = st.text_input("ファイル名", value=default_filename)
+                filename = st.text_input(
+                    "ファイル名", value=default_filename, key="excel_filename_input"
+                )
 
             try:
                 excel_bytes = create_excel(
@@ -405,6 +420,7 @@ def main():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary",
                     use_container_width=False,
+                    key="excel_download_button",
                 )
             except Exception as e:
                 st.error(f"Excel生成エラー: {str(e)}")
@@ -412,9 +428,6 @@ def main():
         else:
             st.warning("明細データが見つかりませんでした。御請求書（サマリーページ）のみの場合、明細表のページもアップロードしてください。")
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
