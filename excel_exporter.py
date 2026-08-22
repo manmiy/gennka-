@@ -97,12 +97,16 @@ def items_to_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
             "伝票No": str(item.get("slip_no", "")),
             "注文No": str(item.get("order_no", "")),
             "備考": str(item.get("remarks", "")),
+            "発注場所": str(item.get("order_location", "")),
         }
         rows.append(row)
 
     if not rows:
         return pd.DataFrame(
-            columns=["行", "分類", "コード", "名称", "仕様", "単位", "数量", "単価", "金額", "伝票No", "注文No", "備考"]
+            columns=[
+                "行", "分類", "コード", "名称", "仕様", "単位", "数量", "単価", "金額",
+                "伝票No", "注文No", "備考", "発注場所",
+            ]
         )
 
     return pd.DataFrame(rows)
@@ -136,16 +140,40 @@ def create_excel(
     supplier: str = "",
     date_str: str = "",
 ) -> bytes:
+    """
+    発注場所ごとに表を分けたExcelファイルを生成する。
+
+    各表は以下の固定列にのみデータを書き込み、それ以外の列は空欄のままにする。
+        H列: 名称 / I列: 仕様 / J列: 単位
+        W列: 発注数量 / X列: 発注単価 / Y列: 発注金額
+
+    Args:
+        df: 明細データのDataFrame（items_to_dataframeの出力。"発注場所"列を含む）
+        title: シート先頭に表示するタイトル
+        supplier: 仕入先名
+        date_str: 請求日
+
+    Returns:
+        Excelファイルのバイトデータ
+    """
     wb = Workbook()
     ws = wb.active
-    ws.title = "原価管理表"
+    ws.title = "発注書"
+
+    # 使用する列（H, I, J, W, X, Y）
+    COL_NAME, COL_SPEC, COL_UNIT = 8, 9, 10
+    COL_QTY, COL_PRICE, COL_AMOUNT = 23, 24, 25
+    FIRST_COL, LAST_COL = COL_NAME, COL_AMOUNT  # H:Y の範囲（タイトル等の帯用）
 
     header_font = Font(name="Yu Gothic", size=10, bold=True)
     header_fill = PatternFill(start_color="B8CCE4", end_color="B8CCE4", fill_type="solid")
     data_font = Font(name="Yu Gothic", size=10)
-    number_font = Font(name="Yu Gothic", size=10)
     title_font = Font(name="Yu Gothic", size=14, bold=True)
     subtitle_font = Font(name="Yu Gothic", size=10)
+    location_font = Font(name="Yu Gothic", size=12, bold=True, color="FFFFFF")
+    location_fill = PatternFill(start_color="2E5090", end_color="2E5090", fill_type="solid")
+    subtotal_font = Font(name="Yu Gothic", size=10, bold=True)
+    subtotal_fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
     thin_border = Border(
         left=Side(style="thin"),
         right=Side(style="thin"),
@@ -153,111 +181,177 @@ def create_excel(
         bottom=Side(style="thin"),
     )
 
-    ws.merge_cells("A1:L1")
-    ws["A1"] = title
-    ws["A1"].font = title_font
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 30
+    # 列幅（使用する列のみ設定。それ以外の列はデフォルトのまま＝空欄）
+    ws.column_dimensions[get_column_letter(COL_NAME)].width = 30
+    ws.column_dimensions[get_column_letter(COL_SPEC)].width = 20
+    ws.column_dimensions[get_column_letter(COL_UNIT)].width = 6
+    ws.column_dimensions[get_column_letter(COL_QTY)].width = 10
+    ws.column_dimensions[get_column_letter(COL_PRICE)].width = 12
+    ws.column_dimensions[get_column_letter(COL_AMOUNT)].width = 14
 
+    row = 1
+
+    # タイトル行
+    ws.merge_cells(start_row=row, start_column=FIRST_COL, end_row=row, end_column=LAST_COL)
+    title_cell = ws.cell(row=row, column=FIRST_COL, value=title)
+    title_cell.font = title_font
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[row].height = 28
+    row += 1
+
+    # サブ情報行（仕入先・請求日）
     if supplier or date_str:
-        ws.merge_cells("A2:F2")
-        ws["A2"] = f"仕入先: {supplier}" if supplier else ""
-        ws["A2"].font = subtitle_font
+        ws.merge_cells(start_row=row, start_column=FIRST_COL, end_row=row, end_column=LAST_COL)
+        info_parts = []
+        if supplier:
+            info_parts.append(f"仕入先: {supplier}")
+        if date_str:
+            info_parts.append(f"請求日: {date_str}")
+        info_cell = ws.cell(row=row, column=FIRST_COL, value="　　".join(info_parts))
+        info_cell.font = subtitle_font
+        ws.row_dimensions[row].height = 20
+        row += 1
 
-        ws.merge_cells("G2:L2")
-        ws["G2"] = f"請求日: {date_str}" if date_str else ""
-        ws["G2"].font = subtitle_font
-        ws["G2"].alignment = Alignment(horizontal="right")
-        ws.row_dimensions[2].height = 20
+    row += 1  # 空行
 
-    header_row = 3
-    headers = ["行", "分類", "コード", "名称", "仕様", "単位", "数量", "単価", "金額", "伝票No", "注文No", "備考"]
-    widths = [5, 12, 14, 30, 20, 6, 8, 12, 14, 10, 12, 25]
+    # 発注場所ごとにグループ化（初出順を維持。空欄は最後に「発注場所未設定」としてまとめる）
+    if "発注場所" not in df.columns:
+        df = df.copy()
+        df["発注場所"] = ""
 
-    for col_idx, (header, width) in enumerate(zip(headers, widths), start=1):
-        cell = ws.cell(row=header_row, column=col_idx, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    location_order: List[str] = []
+    location_groups: Dict[str, List[int]] = {}
+    unset_indices: List[int] = []
 
-    ws.row_dimensions[header_row].height = 25
+    for idx, loc in zip(df.index, df["発注場所"].fillna("")):
+        loc = str(loc).strip()
+        if loc == "":
+            unset_indices.append(idx)
+            continue
+        if loc not in location_groups:
+            location_groups[loc] = []
+            location_order.append(loc)
+        location_groups[loc].append(idx)
 
-    data_start_row = header_row + 1
-    number_columns = {7, 8, 9}
+    if unset_indices:
+        location_groups["（発注場所未設定）"] = unset_indices
+        location_order.append("（発注場所未設定）")
 
-    for row_idx, (_, row_data) in enumerate(df.iterrows(), start=data_start_row):
-        for col_idx, col_name in enumerate(headers, start=1):
-            value = row_data.get(col_name, "")
+    if not location_order:
+        # 明細が1件も無い場合でも空のシートを返す
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
 
-            if pd.isna(value):
-                value = ""
+    for location in location_order:
+        indices = location_groups[location]
+        group_df = df.loc[indices]
 
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
-            cell.font = data_font
+        # 発注場所の見出し行
+        ws.merge_cells(start_row=row, start_column=FIRST_COL, end_row=row, end_column=LAST_COL)
+        loc_cell = ws.cell(row=row, column=FIRST_COL, value=f"発注場所: {location}")
+        loc_cell.font = location_font
+        loc_cell.fill = location_fill
+        loc_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[row].height = 24
+        row += 1
+
+        # ヘッダー行
+        header_map = {
+            COL_NAME: "名称",
+            COL_SPEC: "仕様",
+            COL_UNIT: "単位",
+            COL_QTY: "発注数量",
+            COL_PRICE: "発注単価",
+            COL_AMOUNT: "発注金額",
+        }
+        for col_idx, header in header_map.items():
+            cell = ws.cell(row=row, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
             cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.row_dimensions[row].height = 22
+        header_row_num = row
+        row += 1
 
-            if col_idx in number_columns:
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-                cell.font = number_font
-                if isinstance(value, (int, float)) and value != "":
-                    cell.number_format = "#,##0"
-            elif col_idx == 1:
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        # データ行
+        data_start_row = row
+        for _, item_row in group_df.iterrows():
+            values = {
+                COL_NAME: item_row.get("名称", ""),
+                COL_SPEC: item_row.get("仕様", ""),
+                COL_UNIT: item_row.get("単位", ""),
+                COL_QTY: item_row.get("数量", ""),
+                COL_PRICE: item_row.get("単価", ""),
+                COL_AMOUNT: item_row.get("金額", ""),
+            }
+            for col_idx, value in values.items():
+                if pd.isna(value):
+                    value = ""
+                cell = ws.cell(row=row, column=col_idx, value=value)
+                cell.font = data_font
+                cell.border = thin_border
+                if col_idx in (COL_QTY, COL_PRICE, COL_AMOUNT):
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    if isinstance(value, (int, float)) and value != "":
+                        cell.number_format = "#,##0"
+                else:
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            ws.row_dimensions[row].height = 20
+            row += 1
 
-        ws.row_dimensions[row_idx].height = 20
+        data_end_row = row - 1
 
-    total_row = data_start_row + len(df)
-    ws.merge_cells(f"A{total_row}:F{total_row}")
-    total_label_cell = ws.cell(row=total_row, column=1, value="合計")
-    total_label_cell.font = Font(name="Yu Gothic", size=10, bold=True)
-    total_label_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-    total_label_cell.border = thin_border
-    total_label_cell.alignment = Alignment(horizontal="center", vertical="center")
+        # 小計行（発注数量・発注金額の合計）
+        if data_end_row >= data_start_row:
+            subtotal_label_cell = ws.cell(row=row, column=COL_NAME, value="小計")
+            subtotal_label_cell.font = subtotal_font
+            subtotal_label_cell.fill = subtotal_fill
+            subtotal_label_cell.border = thin_border
+            subtotal_label_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    for col_idx in range(2, 7):
-        cell = ws.cell(row=total_row, column=col_idx)
-        cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-        cell.border = thin_border
+            for col_idx in (COL_SPEC, COL_UNIT):
+                cell = ws.cell(row=row, column=col_idx)
+                cell.fill = subtotal_fill
+                cell.border = thin_border
 
-    qty_cell = ws.cell(row=total_row, column=7)
-    qty_cell.font = Font(name="Yu Gothic", size=10, bold=True)
-    qty_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-    qty_cell.border = thin_border
-    qty_cell.alignment = Alignment(horizontal="right", vertical="center")
-    if len(df) > 0:
-        qty_cell.value = f"=SUM(G{data_start_row}:G{total_row - 1})"
-        qty_cell.number_format = "#,##0"
+            qty_letter = get_column_letter(COL_QTY)
+            amt_letter = get_column_letter(COL_AMOUNT)
 
-    price_cell = ws.cell(row=total_row, column=8)
-    price_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-    price_cell.border = thin_border
+            qty_cell = ws.cell(
+                row=row, column=COL_QTY,
+                value=f"=SUM({qty_letter}{data_start_row}:{qty_letter}{data_end_row})",
+            )
+            qty_cell.font = subtotal_font
+            qty_cell.fill = subtotal_fill
+            qty_cell.border = thin_border
+            qty_cell.alignment = Alignment(horizontal="right", vertical="center")
+            qty_cell.number_format = "#,##0"
 
-    amt_cell = ws.cell(row=total_row, column=9)
-    amt_cell.font = Font(name="Yu Gothic", size=10, bold=True)
-    amt_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-    amt_cell.border = thin_border
-    amt_cell.alignment = Alignment(horizontal="right", vertical="center")
-    if len(df) > 0:
-        amt_cell.value = f"=SUM(I{data_start_row}:I{total_row - 1})"
-        amt_cell.number_format = "#,##0"
+            price_cell = ws.cell(row=row, column=COL_PRICE)
+            price_cell.fill = subtotal_fill
+            price_cell.border = thin_border
 
-    for col_idx in range(10, 13):
-        cell = ws.cell(row=total_row, column=col_idx)
-        cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-        cell.border = thin_border
+            amt_cell = ws.cell(
+                row=row, column=COL_AMOUNT,
+                value=f"=SUM({amt_letter}{data_start_row}:{amt_letter}{data_end_row})",
+            )
+            amt_cell.font = subtotal_font
+            amt_cell.fill = subtotal_fill
+            amt_cell.border = thin_border
+            amt_cell.alignment = Alignment(horizontal="right", vertical="center")
+            amt_cell.number_format = "#,##0"
 
-    ws.row_dimensions[total_row].height = 25
+            ws.row_dimensions[row].height = 22
+            row += 1
 
-    ws.print_title_rows = f"{header_row}:{header_row}"
+        row += 1  # 表と表の間の空行
+
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.fitToWidth = 1
-
-    ws.freeze_panes = f"A{data_start_row}"
 
     buffer = io.BytesIO()
     wb.save(buffer)
