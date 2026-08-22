@@ -58,10 +58,45 @@ st.markdown(
         border-radius: 0 8px 8px 0;
         margin: 1rem 0;
     }
+    .login-container {
+        max-width: 400px;
+        margin: 50px auto;
+        padding: 30px;
+        background-color: #F8F9FA;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def check_password() -> bool:
+    """パスワード認証の画面および判定を行う"""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    # ログイン画面の表示
+    st.markdown('<div class="main-title">📄 請求書OCR ツール</div>', unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### 🔒 アクセス認証")
+        password_input = st.text_input("パスワードを入力してください", type="password")
+        
+        if st.button("ログイン", use_container_width=True, type="primary"):
+            if password_input == "sto0123":
+                st.session_state.authenticated = True
+                st.success("認証に成功しました")
+                st.rerun()
+            else:
+                st.error("パスワードが正しくありません")
+
+    return False
 
 
 def init_session_state():
@@ -84,19 +119,15 @@ def sidebar_settings():
     """サイドバーの設定UIを表示する"""
     st.sidebar.markdown("## ⚙️ 設定")
 
+    # ログアウトボタン
+    if st.sidebar.button("🚪 ログアウト"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
     # Google Cloud認証
     st.sidebar.markdown("### 🔑 Google Cloud 認証")
-    credentials_file = st.sidebar.file_uploader(
-        "サービスアカウント JSON ファイル",
-        type=["json"],
-        help="Google CloudのサービスアカウントJSONキーファイルをアップロードしてください",
-    )
-
-    project_id = st.sidebar.text_input(
-        "プロジェクトID",
-        value="",
-        help="Google CloudのプロジェクトIDを入力してください",
-    )
 
     location = st.sidebar.selectbox(
         "リージョン",
@@ -110,25 +141,50 @@ def sidebar_settings():
         help="Vertex AIのリージョンを選択してください",
     )
 
-    # 認証ボタン
-    if st.sidebar.button("🔐 認証する", use_container_width=True):
-        if credentials_file is None:
-            st.sidebar.error("JSONファイルをアップロードしてください")
-        elif not project_id:
-            st.sidebar.error("プロジェクトIDを入力してください")
-        else:
-            try:
-                credentials_json = json.load(credentials_file)
+    # 1. Streamlit Secretsからの自動認証試行
+    if "gcp_service_account" in st.secrets and not st.session_state.vertex_initialized:
+        try:
+            credentials_json = dict(st.secrets["gcp_service_account"])
+            project_id = credentials_json.get("project_id", "")
+            if project_id:
                 init_vertex_ai(credentials_json, project_id, location)
                 st.session_state.vertex_initialized = True
-                st.sidebar.success("✅ 認証成功！")
-            except Exception as e:
-                st.sidebar.error(f"認証エラー: {str(e)}")
-                st.session_state.vertex_initialized = False
+                st.sidebar.success("⚡ Secretsから自動認証完了")
+        except Exception as e:
+            st.sidebar.warning(f"Secrets自動認証失敗: {str(e)}")
+
+    # 2. 手動認証用フォーム（Secretsが無い場合や再認証用）
+    with st.sidebar.expander("手動でJSONキーを設定する場合", expanded=not st.session_state.vertex_initialized):
+        credentials_file = st.file_uploader(
+            "サービスアカウント JSON ファイル",
+            type=["json"],
+            help="Google CloudのサービスアカウントJSONキーファイルをアップロードしてください",
+        )
+
+        project_id_input = st.text_input(
+            "プロジェクトID",
+            value="",
+            help="Google CloudのプロジェクトIDを入力してください",
+        )
+
+        if st.button("🔐 手動認証する", use_container_width=True):
+            if credentials_file is None:
+                st.sidebar.error("JSONファイルをアップロードしてください")
+            elif not project_id_input:
+                st.sidebar.error("プロジェクトIDを入力してください")
+            else:
+                try:
+                    credentials_json = json.load(credentials_file)
+                    init_vertex_ai(credentials_json, project_id_input, location)
+                    st.session_state.vertex_initialized = True
+                    st.sidebar.success("✅ 認証成功！")
+                except Exception as e:
+                    st.sidebar.error(f"認証エラー: {str(e)}")
+                    st.session_state.vertex_initialized = False
 
     # 認証状態表示
     if st.session_state.vertex_initialized:
-        st.sidebar.markdown("🟢 **認証済み**")
+        st.sidebar.markdown("🟢 **GCP認証済み**")
     else:
         st.sidebar.markdown("🔴 **未認証**")
 
@@ -148,6 +204,10 @@ def sidebar_settings():
 def main():
     """メインアプリケーション"""
     init_session_state()
+
+    # パスワードチェック（未認証の場合はここで処理が停止する）
+    if not check_password():
+        return
 
     # タイトル
     st.markdown('<div class="main-title">📄 請求書OCR → 原価管理表 変換ツール</div>', unsafe_allow_html=True)
