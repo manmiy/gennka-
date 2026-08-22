@@ -31,7 +31,7 @@ st.set_page_config(
     page_title="請求書OCR → 原価管理表",
     page_icon="📄",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # カスタムCSS
@@ -52,13 +52,6 @@ st.markdown(
         border-bottom: 2px solid #2E5090;
         padding-bottom: 0.3rem;
         margin-top: 1.5rem;
-    }
-    .info-box {
-        background-color: #F0F7FF;
-        border-left: 4px solid #2E5090;
-        padding: 1rem;
-        border-radius: 0 8px 8px 0;
-        margin: 1rem 0;
     }
     </style>
     """,
@@ -225,10 +218,6 @@ def main():
 
     # タイトル
     st.markdown('<div class="main-title">📄 請求書OCR → 原価管理表 変換ツール</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="info-box">請求書（PDF/画像）をアップロードし、AI（Vertex AI Gemini）で読み取り、原価管理表形式のExcelファイルに変換します。</div>',
-        unsafe_allow_html=True,
-    )
 
     # サイドバー設定
     aggregate, model_name = sidebar_settings()
@@ -384,15 +373,12 @@ def main():
             )
 
             total_qty = edited_df["数量"].sum() if "数量" in edited_df.columns else 0
-            total_amt = edited_df["金額"].sum() if "金額" in edited_df.columns else 0
 
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b = st.columns(2)
             with col_a:
                 st.metric("明細行数", f"{len(edited_df)} 行")
             with col_b:
                 st.metric("数量合計", f"{total_qty:,.0f}")
-            with col_c:
-                st.metric("金額合計", f"¥{total_amt:,.0f}")
 
             # STEP 4: Excelダウンロード
             st.markdown('<div class="step-header">📥 STEP 4: Excelダウンロード</div>', unsafe_allow_html=True)
