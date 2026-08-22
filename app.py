@@ -58,14 +58,6 @@ st.markdown(
         border-radius: 0 8px 8px 0;
         margin: 1rem 0;
     }
-    .login-container {
-        max-width: 400px;
-        margin: 50px auto;
-        padding: 30px;
-        background-color: #F8F9FA;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -132,13 +124,13 @@ def sidebar_settings():
     location = st.sidebar.selectbox(
         "リージョン",
         options=[
-            "asia-northeast1",
             "us-central1",
+            "asia-northeast1",
             "europe-west1",
             "asia-southeast1",
         ],
         index=0,
-        help="Vertex AIのリージョンを選択してください",
+        help="Vertex AIのリージョンを選択してください（Gemini 2.0利用時は us-central1 を推奨）",
     )
 
     # 1. Streamlit Secretsからの自動認証試行
@@ -205,7 +197,7 @@ def main():
     """メインアプリケーション"""
     init_session_state()
 
-    # パスワードチェック（未認証の場合はここで処理が停止する）
+    # パスワードチェック（未認証の場合は処理停止）
     if not check_password():
         return
 
@@ -219,10 +211,7 @@ def main():
     # サイドバー設定
     aggregate = sidebar_settings()
 
-    # メインエリア
-    # ============================================================
     # STEP 1: ファイルアップロード
-    # ============================================================
     st.markdown('<div class="step-header">📁 STEP 1: 請求書ファイルをアップロード</div>', unsafe_allow_html=True)
 
     uploaded_files = st.file_uploader(
@@ -235,7 +224,6 @@ def main():
     if uploaded_files:
         st.info(f"📎 {len(uploaded_files)} 件のファイルがアップロードされました")
 
-        # プレビュー表示
         with st.expander("📷 アップロードファイル プレビュー", expanded=False):
             for uploaded_file in uploaded_files:
                 st.markdown(f"**{uploaded_file.name}**")
@@ -244,12 +232,10 @@ def main():
                 else:
                     img = Image.open(uploaded_file)
                     st.image(img, width=400)
-                    uploaded_file.seek(0)  # ファイルポインタをリセット
+                    uploaded_file.seek(0)
                 st.markdown("---")
 
-    # ============================================================
     # STEP 2: OCR実行
-    # ============================================================
     st.markdown('<div class="step-header">🤖 STEP 2: AI-OCR 実行</div>', unsafe_allow_html=True)
 
     if not st.session_state.vertex_initialized:
@@ -267,25 +253,21 @@ def main():
     if ocr_button and uploaded_files:
         all_images = []
 
-        # ファイルを画像に変換
         with st.spinner("📄 ファイルを処理中..."):
             for uploaded_file in uploaded_files:
                 file_bytes = uploaded_file.read()
 
                 if uploaded_file.type == "application/pdf":
-                    # PDF → 画像変換
                     page_images = pdf_to_images(file_bytes)
                     for page_num, img in page_images:
                         all_images.append((f"{uploaded_file.name} - P{page_num}", img))
                 else:
-                    # 画像ファイル
                     img = load_image_file(file_bytes)
                     all_images.append((uploaded_file.name, img))
 
         if not all_images:
             st.error("処理対象の画像がありません")
         else:
-            # OCR実行
             st.info(f"🔍 {len(all_images)} ページをOCR処理中...")
             progress_bar = st.progress(0, text="OCR処理中...")
             results = []
@@ -300,7 +282,6 @@ def main():
                     result["source_file"] = name
                     results.append(result)
 
-                    # サマリー情報を保存
                     if result.get("type") == "請求書サマリー":
                         st.session_state.supplier_name = result.get("supplier", "")
                         st.session_state.invoice_date = result.get("date", "")
@@ -316,12 +297,10 @@ def main():
 
             progress_bar.progress(1.0, text="✅ OCR完了！")
 
-            # 結果を保存
             st.session_state.ocr_results = results
             all_items = merge_items(results)
             st.session_state.all_items = all_items
 
-            # DataFrameに変換
             if all_items:
                 df = items_to_dataframe(all_items)
                 st.session_state.edited_df = df
@@ -330,13 +309,10 @@ def main():
 
             st.success(f"✅ OCR完了！ {len(all_items)} 件の明細が検出されました")
 
-    # ============================================================
     # STEP 3: データ表示・編集
-    # ============================================================
     if st.session_state.ocr_results is not None:
         st.markdown('<div class="step-header">📊 STEP 3: データ確認・編集</div>', unsafe_allow_html=True)
 
-        # OCR結果のサマリー
         results = st.session_state.ocr_results
         with st.expander("🔎 OCR結果の詳細（JSON）", expanded=False):
             for result in results:
@@ -352,7 +328,6 @@ def main():
                     st.json(result)
                 st.markdown("---")
 
-        # 集約処理
         if aggregate and st.session_state.all_items:
             aggregated = aggregate_by_product(st.session_state.all_items)
             df = items_to_dataframe(aggregated)
@@ -365,7 +340,6 @@ def main():
         if df is not None and len(df) > 0:
             st.markdown("**データを直接編集できます（ダブルクリックでセルを編集）:**")
 
-            # 編集可能なデータテーブル
             edited_df = st.data_editor(
                 df,
                 use_container_width=True,
@@ -387,7 +361,6 @@ def main():
                 key="data_editor",
             )
 
-            # 合計表示
             total_qty = edited_df["数量"].sum() if "数量" in edited_df.columns else 0
             total_amt = edited_df["金額"].sum() if "金額" in edited_df.columns else 0
 
@@ -399,19 +372,15 @@ def main():
             with col_c:
                 st.metric("金額合計", f"¥{total_amt:,.0f}")
 
-            # ============================================================
             # STEP 4: Excelダウンロード
-            # ============================================================
             st.markdown('<div class="step-header">📥 STEP 4: Excelダウンロード</div>', unsafe_allow_html=True)
 
             col_d1, col_d2 = st.columns([1, 3])
             with col_d1:
-                # ファイル名設定
                 today = datetime.now().strftime("%Y%m%d")
                 default_filename = f"原価管理表_{today}.xlsx"
                 filename = st.text_input("ファイル名", value=default_filename)
 
-            # Excelファイル生成・ダウンロード
             try:
                 excel_bytes = create_excel(
                     edited_df,
