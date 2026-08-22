@@ -12,7 +12,6 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 
-# 原価管理表のカラム定義
 COLUMNS = [
     {"key": "row_no", "header": "行", "width": 5},
     {"key": "category", "header": "分類", "width": 12},
@@ -28,7 +27,6 @@ COLUMNS = [
     {"key": "remarks", "header": "備考", "width": 25},
 ]
 
-# メーカー名→分類の自動マッピング
 CATEGORY_MAP = {
     "吉野石膏": "ボード類",
     "DAIKEN": "ボード類",
@@ -48,22 +46,10 @@ CATEGORY_MAP = {
 
 
 def classify_item(maker: str, product_name: str) -> str:
-    """
-    メーカー名と品名から分類を推定する
-
-    Args:
-        maker: メーカー名
-        product_name: 品名
-
-    Returns:
-        推定された分類名
-    """
-    # メーカー名でマッチング
     for key, category in CATEGORY_MAP.items():
         if key in maker:
             return category
 
-    # 品名からのキーワードマッチング
     keywords = {
         "ベベルボード": "ボード類",
         "ダイライト": "ボード類",
@@ -93,15 +79,6 @@ def classify_item(maker: str, product_name: str) -> str:
 
 
 def items_to_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
-    """
-    明細アイテムリストをDataFrameに変換する
-
-    Args:
-        items: 明細アイテムリスト
-
-    Returns:
-        DataFrame
-    """
     rows = []
     for i, item in enumerate(items, start=1):
         maker = str(item.get("maker", ""))
@@ -132,33 +109,12 @@ def items_to_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
 
 
 def _build_spec(item: Dict[str, Any]) -> str:
-    """
-    品番や品名から仕様情報を構築する
-
-    Args:
-        item: 明細アイテム辞書
-
-    Returns:
-        仕様文字列
-    """
-    # 品名に含まれるサイズ情報（例: 12.5mm 3×8、30mm 3種 3×6）を抽出
     product_name = str(item.get("product_name", ""))
     product_code = str(item.get("product_code", ""))
-
-    # 品番をそのまま仕様として使用
     return product_code
 
 
 def _safe_number(value) -> Optional[float]:
-    """
-    安全に数値変換を行う
-
-    Args:
-        value: 変換する値
-
-    Returns:
-        数値またはNone
-    """
     if value is None or value == "":
         return None
     if isinstance(value, (int, float)):
@@ -180,23 +136,10 @@ def create_excel(
     supplier: str = "",
     date_str: str = "",
 ) -> bytes:
-    """
-    原価管理表形式のExcelファイルを生成する
-
-    Args:
-        df: 明細データのDataFrame
-        title: シートタイトル
-        supplier: 仕入先名
-        date_str: 請求日
-
-    Returns:
-        Excelファイルのバイトデータ
-    """
     wb = Workbook()
     ws = wb.active
     ws.title = "原価管理表"
 
-    # スタイル定義
     header_font = Font(name="Yu Gothic", size=10, bold=True)
     header_fill = PatternFill(start_color="B8CCE4", end_color="B8CCE4", fill_type="solid")
     data_font = Font(name="Yu Gothic", size=10)
@@ -210,14 +153,12 @@ def create_excel(
         bottom=Side(style="thin"),
     )
 
-    # タイトル行
     ws.merge_cells("A1:L1")
     ws["A1"] = title
     ws["A1"].font = title_font
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 30
 
-    # サブ情報行
     if supplier or date_str:
         ws.merge_cells("A2:F2")
         ws["A2"] = f"仕入先: {supplier}" if supplier else ""
@@ -229,7 +170,6 @@ def create_excel(
         ws["G2"].alignment = Alignment(horizontal="right")
         ws.row_dimensions[2].height = 20
 
-    # ヘッダー行（3行目）
     header_row = 3
     headers = ["行", "分類", "コード", "名称", "仕様", "単位", "数量", "単価", "金額", "伝票No", "注文No", "備考"]
     widths = [5, 12, 14, 30, 20, 6, 8, 12, 14, 10, 12, 25]
@@ -244,15 +184,13 @@ def create_excel(
 
     ws.row_dimensions[header_row].height = 25
 
-    # データ行（4行目から）
     data_start_row = header_row + 1
-    number_columns = {7, 8, 9}  # 数量、単価、金額
+    number_columns = {7, 8, 9}
 
     for row_idx, (_, row_data) in enumerate(df.iterrows(), start=data_start_row):
         for col_idx, col_name in enumerate(headers, start=1):
             value = row_data.get(col_name, "")
 
-            # NaN チェック
             if pd.isna(value):
                 value = ""
 
@@ -261,20 +199,17 @@ def create_excel(
             cell.border = thin_border
 
             if col_idx in number_columns:
-                # 数値列: 右揃え、カンマ区切りフォーマット
                 cell.alignment = Alignment(horizontal="right", vertical="center")
                 cell.font = number_font
                 if isinstance(value, (int, float)) and value != "":
                     cell.number_format = "#,##0"
             elif col_idx == 1:
-                # 行番号: 中央揃え
                 cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
                 cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
         ws.row_dimensions[row_idx].height = 20
 
-    # 合計行
     total_row = data_start_row + len(df)
     ws.merge_cells(f"A{total_row}:F{total_row}")
     total_label_cell = ws.cell(row=total_row, column=1, value="合計")
@@ -283,13 +218,11 @@ def create_excel(
     total_label_cell.border = thin_border
     total_label_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    # 合計行のスタイル設定（マージされたセルの境界線）
     for col_idx in range(2, 7):
         cell = ws.cell(row=total_row, column=col_idx)
         cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
         cell.border = thin_border
 
-    # 数量合計
     qty_cell = ws.cell(row=total_row, column=7)
     qty_cell.font = Font(name="Yu Gothic", size=10, bold=True)
     qty_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
@@ -299,12 +232,10 @@ def create_excel(
         qty_cell.value = f"=SUM(G{data_start_row}:G{total_row - 1})"
         qty_cell.number_format = "#,##0"
 
-    # 単価列（合計行は空）
     price_cell = ws.cell(row=total_row, column=8)
     price_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
     price_cell.border = thin_border
 
-    # 金額合計
     amt_cell = ws.cell(row=total_row, column=9)
     amt_cell.font = Font(name="Yu Gothic", size=10, bold=True)
     amt_cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
@@ -314,7 +245,6 @@ def create_excel(
         amt_cell.value = f"=SUM(I{data_start_row}:I{total_row - 1})"
         amt_cell.number_format = "#,##0"
 
-    # 残りの列
     for col_idx in range(10, 13):
         cell = ws.cell(row=total_row, column=col_idx)
         cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
@@ -322,16 +252,13 @@ def create_excel(
 
     ws.row_dimensions[total_row].height = 25
 
-    # 印刷設定
     ws.print_title_rows = f"{header_row}:{header_row}"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.fitToWidth = 1
 
-    # ウィンドウ枠の固定
     ws.freeze_panes = f"A{data_start_row}"
 
-    # バイトデータとして出力
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
