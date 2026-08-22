@@ -118,7 +118,8 @@ def extract_invoice_data(image: Image.Image) -> Dict[str, Any]:
 
     image_part = Part.from_data(data=image_bytes, mime_type="image/png")
 
-    model = GenerativeModel("gemini-2.0-flash")
+    # ocr_engine.py
+model = GenerativeModel("gemini-1.5-flash")  # gemini-2.0-flash から変更
 
     response = model.generate_content(
         [image_part, INVOICE_OCR_PROMPT],
