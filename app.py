@@ -1,0 +1,379 @@
+"""
+請求書OCR → 原価管理表 Streamlitアプリ
+
+請求書（PDF/画像）をアップロードし、Vertex AI Geminiで読み取り、
+原価管理表形式のExcelファイルに変換するアプリケーション
+"""
+
+import json
+import io
+from datetime import datetime
+
+import pandas as pd
+import streamlit as st
+from PIL import Image
+
+from pdf_processor import pdf_to_images, load_image_file
+from ocr_engine import (
+    init_vertex_ai,
+    extract_invoice_data,
+    process_multiple_images,
+    merge_items,
+    aggregate_by_product,
+)
+from excel_exporter import items_to_dataframe, create_excel
+
+
+# ページ設定
+st.set_page_config(
+    page_title="請求書OCR → 原価管理表",
+    page_icon="📄",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# カスタムCSS
+st.markdown(
+    """
+    <style>
+    .main-title {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #1E3A5F;
+        text-align: center;
+        padding: 1rem 0;
+    }
+    .step-header {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #2E5090;
+        border-bottom: 2px solid #2E5090;
+        padding-bottom: 0.3rem;
+        margin-top: 1.5rem;
+    }
+    .info-box {
+        background-color: #F0F7FF;
+        border-left: 4px solid #2E5090;
+        padding: 1rem;
+        border-radius: 0 8px 8px 0;
+        margin: 1rem 0;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def init_session_state():
+    """セッション状態を初期化する"""
+    if "ocr_results" not in st.session_state:
+        st.session_state.ocr_results = None
+    if "all_items" not in st.session_state:
+        st.session_state.all_items = None
+    if "edited_df" not in st.session_state:
+        st.session_state.edited_df = None
+    if "vertex_initialized" not in st.session_state:
+        st.session_state.vertex_initialized = False
+    if "supplier_name" not in st.session_state:
+        st.session_state.supplier_name = ""
+    if "invoice_date" not in st.session_state:
+        st.session_state.invoice_date = ""
+
+
+def sidebar_settings():
+    """サイドバーの設定UIを表示する"""
+    st.sidebar.markdown("## ⚙️ 設定")
+
+    # Google Cloud認証
+    st.sidebar.markdown("### 🔑 Google Cloud 認証")
+    credentials_file = st.sidebar.file_uploader(
+        "サービスアカウント JSON ファイル",
+        type=["json"],
+        help="Google CloudのサービスアカウントJSONキーファイルをアップロードしてください",
+    )
+
+    project_id = st.sidebar.text_input(
+        "プロジェクトID",
+        value="",
+        help="Google CloudのプロジェクトIDを入力してください",
+    )
+
+    location = st.sidebar.selectbox(
+        "リージョン",
+        options=[
+            "asia-northeast1",
+            "us-central1",
+            "europe-west1",
+            "asia-southeast1",
+        ],
+        index=0,
+        help="Vertex AIのリージョンを選択してください",
+    )
+
+    # 認証ボタン
+    if st.sidebar.button("🔐 認証する", use_container_width=True):
+        if credentials_file is None:
+            st.sidebar.error("JSONファイルをアップロードしてください")
+        elif not project_id:
+            st.sidebar.error("プロジェクトIDを入力してください")
+        else:
+            try:
+                credentials_json = json.load(credentials_file)
+                init_vertex_ai(credentials_json, project_id, location)
+                st.session_state.vertex_initialized = True
+                st.sidebar.success("✅ 認証成功！")
+            except Exception as e:
+                st.sidebar.error(f"認証エラー: {str(e)}")
+                st.session_state.vertex_initialized = False
+
+    # 認証状態表示
+    if st.session_state.vertex_initialized:
+        st.sidebar.markdown("🟢 **認証済み**")
+    else:
+        st.sidebar.markdown("🔴 **未認証**")
+
+    st.sidebar.markdown("---")
+
+    # 出力設定
+    st.sidebar.markdown("### 📊 出力設定")
+    aggregate = st.sidebar.checkbox(
+        "同じ品名の数量・金額を集約する",
+        value=False,
+        help="チェックすると同じ品名の行を1行にまとめ、数量と金額を合計します",
+    )
+
+    return aggregate
+
+
+def main():
+    """メインアプリケーション"""
+    init_session_state()
+
+    # タイトル
+    st.markdown('<div class="main-title">📄 請求書OCR → 原価管理表 変換ツール</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="info-box">請求書（PDF/画像）をアップロードし、AI（Vertex AI Gemini）で読み取り、原価管理表形式のExcelファイルに変換します。</div>',
+        unsafe_allow_html=True,
+    )
+
+    # サイドバー設定
+    aggregate = sidebar_settings()
+
+    # メインエリア
+    # ============================================================
+    # STEP 1: ファイルアップロード
+    # ============================================================
+    st.markdown('<div class="step-header">📁 STEP 1: 請求書ファイルをアップロード</div>', unsafe_allow_html=True)
+
+    uploaded_files = st.file_uploader(
+        "請求書ファイルを選択してください（複数可）",
+        type=["pdf", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        help="PDF、PNG、JPG形式に対応しています。複数ファイルを同時にアップロードできます。",
+    )
+
+    if uploaded_files:
+        st.info(f"📎 {len(uploaded_files)} 件のファイルがアップロードされました")
+
+        # プレビュー表示
+        with st.expander("📷 アップロードファイル プレビュー", expanded=False):
+            for uploaded_file in uploaded_files:
+                st.markdown(f"**{uploaded_file.name}**")
+                if uploaded_file.type == "application/pdf":
+                    st.markdown("📄 PDFファイル（OCR実行時にページ画像に変換されます）")
+                else:
+                    img = Image.open(uploaded_file)
+                    st.image(img, width=400)
+                    uploaded_file.seek(0)  # ファイルポインタをリセット
+                st.markdown("---")
+
+    # ============================================================
+    # STEP 2: OCR実行
+    # ============================================================
+    st.markdown('<div class="step-header">🤖 STEP 2: AI-OCR 実行</div>', unsafe_allow_html=True)
+
+    if not st.session_state.vertex_initialized:
+        st.warning("⚠️ サイドバーでGoogle Cloud認証を行ってください")
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        ocr_button = st.button(
+            "🔍 OCR実行",
+            disabled=not uploaded_files or not st.session_state.vertex_initialized,
+            use_container_width=True,
+            type="primary",
+        )
+
+    if ocr_button and uploaded_files:
+        all_images = []
+
+        # ファイルを画像に変換
+        with st.spinner("📄 ファイルを処理中..."):
+            for uploaded_file in uploaded_files:
+                file_bytes = uploaded_file.read()
+
+                if uploaded_file.type == "application/pdf":
+                    # PDF → 画像変換
+                    page_images = pdf_to_images(file_bytes)
+                    for page_num, img in page_images:
+                        all_images.append((f"{uploaded_file.name} - P{page_num}", img))
+                else:
+                    # 画像ファイル
+                    img = load_image_file(file_bytes)
+                    all_images.append((uploaded_file.name, img))
+
+        if not all_images:
+            st.error("処理対象の画像がありません")
+        else:
+            # OCR実行
+            st.info(f"🔍 {len(all_images)} ページをOCR処理中...")
+            progress_bar = st.progress(0, text="OCR処理中...")
+            results = []
+
+            for i, (name, img) in enumerate(all_images):
+                progress_bar.progress(
+                    (i) / len(all_images),
+                    text=f"OCR処理中... ({i + 1}/{len(all_images)}) {name}",
+                )
+                try:
+                    result = extract_invoice_data(img)
+                    result["source_file"] = name
+                    results.append(result)
+
+                    # サマリー情報を保存
+                    if result.get("type") == "請求書サマリー":
+                        st.session_state.supplier_name = result.get("supplier", "")
+                        st.session_state.invoice_date = result.get("date", "")
+
+                except Exception as e:
+                    st.error(f"❌ {name} の処理でエラー: {str(e)}")
+                    results.append({
+                        "type": "エラー",
+                        "error": str(e),
+                        "source_file": name,
+                        "items": [],
+                    })
+
+            progress_bar.progress(1.0, text="✅ OCR完了！")
+
+            # 結果を保存
+            st.session_state.ocr_results = results
+            all_items = merge_items(results)
+            st.session_state.all_items = all_items
+
+            # DataFrameに変換
+            if all_items:
+                df = items_to_dataframe(all_items)
+                st.session_state.edited_df = df
+            else:
+                st.session_state.edited_df = None
+
+            st.success(f"✅ OCR完了！ {len(all_items)} 件の明細が検出されました")
+
+    # ============================================================
+    # STEP 3: データ表示・編集
+    # ============================================================
+    if st.session_state.ocr_results is not None:
+        st.markdown('<div class="step-header">📊 STEP 3: データ確認・編集</div>', unsafe_allow_html=True)
+
+        # OCR結果のサマリー
+        results = st.session_state.ocr_results
+        with st.expander("🔎 OCR結果の詳細（JSON）", expanded=False):
+            for result in results:
+                source = result.get("source_file", "不明")
+                result_type = result.get("type", "不明")
+                st.markdown(f"**{source}** — タイプ: {result_type}")
+
+                if result.get("type") == "エラー":
+                    st.error(result.get("error", ""))
+                    if "raw_text" in result:
+                        st.code(result["raw_text"], language="text")
+                else:
+                    st.json(result)
+                st.markdown("---")
+
+        # 集約処理
+        if aggregate and st.session_state.all_items:
+            aggregated = aggregate_by_product(st.session_state.all_items)
+            df = items_to_dataframe(aggregated)
+            st.info(f"📌 品名集約: {len(st.session_state.all_items)} 行 → {len(aggregated)} 行")
+        elif st.session_state.edited_df is not None:
+            df = st.session_state.edited_df
+        else:
+            df = None
+
+        if df is not None and len(df) > 0:
+            st.markdown("**データを直接編集できます（ダブルクリックでセルを編集）:**")
+
+            # 編集可能なデータテーブル
+            edited_df = st.data_editor(
+                df,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "行": st.column_config.NumberColumn("行", width="small"),
+                    "分類": st.column_config.TextColumn("分類", width="medium"),
+                    "コード": st.column_config.TextColumn("コード", width="medium"),
+                    "名称": st.column_config.TextColumn("名称", width="large"),
+                    "仕様": st.column_config.TextColumn("仕様", width="medium"),
+                    "単位": st.column_config.TextColumn("単位", width="small"),
+                    "数量": st.column_config.NumberColumn("数量", format="%d", width="small"),
+                    "単価": st.column_config.NumberColumn("単価", format="%,.0f", width="medium"),
+                    "金額": st.column_config.NumberColumn("金額", format="%,.0f", width="medium"),
+                    "伝票No": st.column_config.TextColumn("伝票No", width="medium"),
+                    "注文No": st.column_config.TextColumn("注文No", width="medium"),
+                    "備考": st.column_config.TextColumn("備考", width="large"),
+                },
+                key="data_editor",
+            )
+
+            # 合計表示
+            total_qty = edited_df["数量"].sum() if "数量" in edited_df.columns else 0
+            total_amt = edited_df["金額"].sum() if "金額" in edited_df.columns else 0
+
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("明細行数", f"{len(edited_df)} 行")
+            with col_b:
+                st.metric("数量合計", f"{total_qty:,.0f}")
+            with col_c:
+                st.metric("金額合計", f"¥{total_amt:,.0f}")
+
+            # ============================================================
+            # STEP 4: Excelダウンロード
+            # ============================================================
+            st.markdown('<div class="step-header">📥 STEP 4: Excelダウンロード</div>', unsafe_allow_html=True)
+
+            col_d1, col_d2 = st.columns([1, 3])
+            with col_d1:
+                # ファイル名設定
+                today = datetime.now().strftime("%Y%m%d")
+                default_filename = f"原価管理表_{today}.xlsx"
+                filename = st.text_input("ファイル名", value=default_filename)
+
+            # Excelファイル生成・ダウンロード
+            try:
+                excel_bytes = create_excel(
+                    edited_df,
+                    title="原価管理表",
+                    supplier=st.session_state.supplier_name,
+                    date_str=st.session_state.invoice_date,
+                )
+
+                st.download_button(
+                    label="📥 Excelファイルをダウンロード",
+                    data=excel_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=False,
+                )
+            except Exception as e:
+                st.error(f"Excel生成エラー: {str(e)}")
+
+        else:
+            st.warning("明細データが見つかりませんでした。御請求書（サマリーページ）のみの場合、明細表のページもアップロードしてください。")
+
+
+if __name__ == "__main__":
+    main()
