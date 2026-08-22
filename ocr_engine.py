@@ -61,7 +61,8 @@ INVOICE_OCR_PROMPT = """あなたは日本の建設資材の請求書を読み�
       "unit_price": "単価（数値）",
       "amount": "金額（数値）",
       "order_no": "注文No",
-      "remarks": "備考"
+      "remarks": "備考（発注場所の記載を除いた残りのテキスト）",
+      "order_location": "備考欄の末尾に記載されている発注場所・現場名（例:「○○現場」「○○様邸」など）。記載が無ければ空文字列 \"\" にしてください。"
     }
   ]
 }
@@ -92,6 +93,8 @@ INVOICE_OCR_PROMPT = """あなたは日本の建設資材の請求書を読み�
 - 必ず有効なJSONのみを出力してください（説明文は不要）
 - 「伝票合計」「件名合計」の行はitemsに含めないでください
 - 同じ伝票Noの中に複数の品目がある場合、各品目を個別の行として出力してください
+- 備考欄の末尾に発注場所・現場名が書かれている場合は、それを remarks から取り除いて order_location フィールドに分けて出力してください（例: 備考が「特注品／東京現場」なら remarks="特注品", order_location="東京現場"）
+- 発注場所の記載が無い明細行は order_location を空文字列 "" にしてください
 """
 
 
@@ -248,7 +251,8 @@ def merge_items(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def aggregate_by_product(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    同じ品名のアイテムの数量と金額を集約する
+    同じ発注場所・同じ品名のアイテムの数量と金額を集約する
+    （発注場所が異なる明細は集約対象外。発注場所ごとに表を分けるため）
 
     Args:
         items: 明細アイテムリスト
@@ -261,7 +265,8 @@ def aggregate_by_product(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for item in items:
         product_name = item.get("product_name", "")
         product_code = item.get("product_code", "")
-        key = f"{product_name}_{product_code}"
+        order_location = item.get("order_location", "")
+        key = f"{order_location}_{product_name}_{product_code}"
 
         if key in aggregated:
             # 数量と金額を加算
