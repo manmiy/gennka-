@@ -20,6 +20,8 @@ from ocr_engine import (
     process_multiple_images,
     merge_items,
     aggregate_by_product,
+    DEFAULT_MODEL_NAME,
+    AVAILABLE_MODELS,
 )
 from excel_exporter import items_to_dataframe, create_excel
 
@@ -74,12 +76,12 @@ def check_password() -> bool:
 
     # ログイン画面の表示
     st.markdown('<div class="main-title">📄 請求書OCR ツール</div>', unsafe_allow_html=True)
-    
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("### 🔒 アクセス認証")
         password_input = st.text_input("パスワードを入力してください", type="password")
-        
+
         if st.button("ログイン", use_container_width=True, type="primary"):
             if password_input == "sto0123":
                 st.session_state.authenticated = True
@@ -124,13 +126,17 @@ def sidebar_settings():
     location = st.sidebar.selectbox(
         "リージョン",
         options=[
+            "global",
             "us-central1",
             "asia-northeast1",
             "europe-west1",
             "asia-southeast1",
         ],
         index=0,
-        help="Vertex AIのリージョンを選択してください（Gemini 2.0利用時は us-central1 を推奨）",
+        help=(
+            "Vertex AIのリージョンを選択してください。"
+            "Gemini 3.x系モデル（gemini-3.5-flash-lite等）は global リージョンでのみ利用可能です。"
+        ),
     )
 
     # 1. Streamlit Secretsからの自動認証試行
@@ -182,6 +188,22 @@ def sidebar_settings():
 
     st.sidebar.markdown("---")
 
+    # モデル設定
+    st.sidebar.markdown("### 🤖 OCRモデル")
+    model_name = st.sidebar.selectbox(
+        "使用するGeminiモデル",
+        options=AVAILABLE_MODELS,
+        index=AVAILABLE_MODELS.index(DEFAULT_MODEL_NAME)
+        if DEFAULT_MODEL_NAME in AVAILABLE_MODELS
+        else 0,
+        help=(
+            "Vertex AIのモデルは定期的に廃止されます。"
+            "404エラーが出た場合はここで別のモデルに切り替えてください。"
+        ),
+    )
+
+    st.sidebar.markdown("---")
+
     # 出力設定
     st.sidebar.markdown("### 📊 出力設定")
     aggregate = st.sidebar.checkbox(
@@ -190,7 +212,7 @@ def sidebar_settings():
         help="チェックすると同じ品名の行を1行にまとめ、数量と金額を合計します",
     )
 
-    return aggregate
+    return aggregate, model_name
 
 
 def main():
@@ -209,7 +231,7 @@ def main():
     )
 
     # サイドバー設定
-    aggregate = sidebar_settings()
+    aggregate, model_name = sidebar_settings()
 
     # STEP 1: ファイルアップロード
     st.markdown('<div class="step-header">📁 STEP 1: 請求書ファイルをアップロード</div>', unsafe_allow_html=True)
@@ -268,7 +290,7 @@ def main():
         if not all_images:
             st.error("処理対象の画像がありません")
         else:
-            st.info(f"🔍 {len(all_images)} ページをOCR処理中...")
+            st.info(f"🔍 {len(all_images)} ページをOCR処理中... （モデル: {model_name}）")
             progress_bar = st.progress(0, text="OCR処理中...")
             results = []
 
@@ -278,7 +300,7 @@ def main():
                     text=f"OCR処理中... ({i + 1}/{len(all_images)}) {name}",
                 )
                 try:
-                    result = extract_invoice_data(img)
+                    result = extract_invoice_data(img, model_name=model_name)
                     result["source_file"] = name
                     results.append(result)
 
