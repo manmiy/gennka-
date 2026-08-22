@@ -368,6 +368,7 @@ def main():
                     "伝票No": st.column_config.TextColumn("伝票No", width="medium"),
                     "注文No": st.column_config.TextColumn("注文No", width="medium"),
                     "備考": st.column_config.TextColumn("備考", width="large"),
+                    "発注場所": st.column_config.TextColumn("発注場所", width="medium"),
                 },
                 key="data_editor",
             )
@@ -411,6 +412,9 @@ def main():
         else:
             st.warning("明細データが見つかりませんでした。御請求書（サマリーページ）のみの場合、明細表のページもアップロードしてください。")
 
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
