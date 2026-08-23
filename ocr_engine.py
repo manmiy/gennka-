@@ -15,7 +15,7 @@ from vertexai.generative_models import GenerativeModel, Part
 
 DEFAULT_MODEL_NAME = "gemini-3.5-flash-lite"
 AVAILABLE_MODELS = [
-    "gemini-3.5-flash-lite"
+    "gemini-3.5-flash-lite",
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
