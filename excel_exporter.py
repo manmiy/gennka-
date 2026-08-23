@@ -31,23 +31,36 @@ CATEGORY_MAP = {
     "吉野石膏": "ボード類",
     "DAIKEN": "ボード類",
     "大建": "ボード類",
-    "TOTO": "設備",
-    "LIXIL": "設備",
-    "リクシル": "設備",
-    "INAX": "設備",
+    "TOTO": "住設機器",
+    "トクラス": "住設機器",
+    "KVK": "給排水設備",
+    "LIXIL": "住設機器",
+    "リクシル": "住設機器",
+    "INAX": "住設機器",
+    "サンダイヤ": "設備機器",
+    "コロナ": "暖房・給湯",
+    "ベストパーツ": "配管部材",
     "JSP": "断熱材",
     "旭ファイバーグラ": "断熱材",
     "旭ファイバー": "断熱材",
     "樋口仕入先": "ケイカル板",
-    "城東テクノ": "設備",
+    "城東テクノ": "設備部材",
     "ニチハ": "外壁材",
-    "TOTO機": "設備",
+    "TOTO機": "住設機器",
+    "三浦金物": "金物・副資材",
+    "日本ライティング": "照明器具",
+    "オーデリック": "照明器具",
+    "パナソニック": "電気・住設",
+    "ルームワン": "カーテン・インテリア",
+    "シンコール": "インテリア",
+    "タチカワ": "ブラインド・カーテン",
 }
 
 
 def classify_item(maker: str, product_name: str) -> str:
+    """メーカー名や品名から適切な分類を推定する"""
     for key, category in CATEGORY_MAP.items():
-        if key in maker:
+        if key.lower() in maker.lower():
             return category
 
     keywords = {
@@ -63,16 +76,52 @@ def classify_item(maker: str, product_name: str) -> str:
         "合板": "合板類",
         "コンパネ": "合板類",
         "ベニヤ": "合板類",
-        "サッシ": "設備",
-        "窓枠": "設備",
-        "サーモス": "設備",
+        "サッシ": "開口部",
+        "窓枠": "開口部",
+        "サーモス": "開口部",
         "値引き": "値引き",
         "NEBIKI": "値引き",
-        "送料": "送料",
+        "システムバス": "住設機器",
+        "ユニットバス": "住設機器",
+        "システムキッチン": "住設機器",
+        "キッチン": "住設機器",
+        "カップボード": "住設機器",
+        "洗面": "住設機器",
+        "トイレ": "住設機器",
+        "便器": "住設機器",
+        "ボイラー": "給湯・暖房",
+        "給湯器": "給湯・暖房",
+        "オイルタンク": "設備機器",
+        "LED": "照明器具",
+        "シーリング": "照明器具",
+        "ダウンライト": "照明器具",
+        "スポットライト": "照明器具",
+        "ブラケット": "照明器具",
+        "ドレープ": "カーテン",
+        "レース": "カーテン",
+        "カーテンレール": "カーテン",
+        "ロールスクリーン": "インテリア",
+        "ブラインド": "インテリア",
+        "フサカケ": "カーテン",
+        "シリコン": "副資材",
+        "コーキング": "副資材",
+        "テープ": "副資材",
+        "ボルト": "金物",
+        "座金": "金物",
+        "釘": "金物",
+        "ビス": "金物",
+        "ステープル": "金物",
+        "アンカー": "金物",
+        "結束線": "金物",
+        "取付施工費": "施工費",
+        "施工費": "施工費",
+        "諸経費": "諸経費",
+        "配送費": "運賃・諸経費",
+        "送料": "運賃・諸経費",
     }
 
     for keyword, category in keywords.items():
-        if keyword in product_name:
+        if keyword.lower() in product_name.lower():
             return category
 
     return ""
@@ -113,8 +162,11 @@ def items_to_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
 
 
 def _build_spec(item: Dict[str, Any]) -> str:
-    product_name = str(item.get("product_name", ""))
-    product_code = str(item.get("product_code", ""))
+    """仕様情報を取得する（明示的なspecがあれば優先し、無ければproduct_code等を使用）"""
+    spec = str(item.get("spec", "")).strip()
+    if spec:
+        return spec
+    product_code = str(item.get("product_code", "")).strip()
     return product_code
 
 
@@ -163,7 +215,7 @@ def create_excel(
     # 使用する列（H, I, J, W, X, Y）
     COL_NAME, COL_SPEC, COL_UNIT = 8, 9, 10
     COL_QTY, COL_PRICE, COL_AMOUNT = 23, 24, 25
-    FIRST_COL, LAST_COL = COL_NAME, COL_AMOUNT  # H:Y の範囲（タイトル等の帯用）
+    FIRST_COL, LAST_COL = COL_NAME, COL_AMOUNT
 
     header_font = Font(name="Yu Gothic", size=10, bold=True)
     header_fill = PatternFill(start_color="B8CCE4", end_color="B8CCE4", fill_type="solid")
@@ -181,13 +233,28 @@ def create_excel(
         bottom=Side(style="thin"),
     )
 
-    # 列幅（使用する列のみ設定。それ以外の列はデフォルトのまま＝空欄）
+    # 列幅設定
+    # A〜G列 (1〜7): 幅1
+    for col_idx in range(1, 8):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 1
+
+    # H, I, J列 (8, 9, 10): データ列
     ws.column_dimensions[get_column_letter(COL_NAME)].width = 30
     ws.column_dimensions[get_column_letter(COL_SPEC)].width = 20
     ws.column_dimensions[get_column_letter(COL_UNIT)].width = 6
+
+    # K〜V列 (11〜22): 幅1
+    for col_idx in range(11, 23):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 1
+
+    # W, X, Y列 (23, 24, 25): データ列
     ws.column_dimensions[get_column_letter(COL_QTY)].width = 10
     ws.column_dimensions[get_column_letter(COL_PRICE)].width = 12
     ws.column_dimensions[get_column_letter(COL_AMOUNT)].width = 14
+
+    # Z〜AJ列 (26〜36): 幅1
+    for col_idx in range(26, 37):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 1
 
     row = 1
 
@@ -214,7 +281,7 @@ def create_excel(
 
     row += 1  # 空行
 
-    # 発注場所ごとにグループ化（初出順を維持。空欄は最後に「発注場所未設定」としてまとめる）
+    # 発注場所ごとにグループ化
     if "発注場所" not in df.columns:
         df = df.copy()
         df["発注場所"] = ""
@@ -238,7 +305,6 @@ def create_excel(
         location_order.append("（発注場所未設定）")
 
     if not location_order:
-        # 明細が1件も無い場合でも空のシートを返す
         buffer = io.BytesIO()
         wb.save(buffer)
         buffer.seek(0)
@@ -273,7 +339,6 @@ def create_excel(
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         ws.row_dimensions[row].height = 22
-        header_row_num = row
         row += 1
 
         # データ行
@@ -304,7 +369,7 @@ def create_excel(
 
         data_end_row = row - 1
 
-        # 小計行（発注数量・発注金額の合計）
+        # 小計行
         if data_end_row >= data_start_row:
             subtotal_label_cell = ws.cell(row=row, column=COL_NAME, value="小計")
             subtotal_label_cell.font = subtotal_font
@@ -347,7 +412,7 @@ def create_excel(
             ws.row_dimensions[row].height = 22
             row += 1
 
-        row += 1  # 表と表の間の空行
+        row += 1
 
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
