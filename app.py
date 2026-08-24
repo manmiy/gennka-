@@ -11,9 +11,39 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from PIL import Image
+try:
+    from pdf_processor import pdf_to_images, tiff_to_images, load_image_file
+except ImportError:
+    import fitz
+    from PIL import ImageSequence
 
-from pdf_processor import pdf_to_images, tiff_to_images, load_image_file
+    def pdf_to_images(pdf_bytes, dpi=200):
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        images = []
+        zoom = dpi / 72
+        matrix = fitz.Matrix(zoom, zoom)
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            pix = page.get_pixmap(matrix=matrix)
+            img_bytes = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            images.append((page_num + 1, img))
+        doc.close()
+        return images
+
+    def tiff_to_images(tiff_bytes):
+        img = Image.open(io.BytesIO(tiff_bytes))
+        images = []
+        page_num = 1
+        for frame in ImageSequence.Iterator(img):
+            images.append((page_num, frame.convert("RGB").copy()))
+            page_num += 1
+        return images
+
+    def load_image_file(file_bytes):
+        img = Image.open(io.BytesIO(file_bytes))
+        return img.convert("RGB")
+
 from ocr_engine import (
     init_vertex_ai,
     extract_invoice_data,
