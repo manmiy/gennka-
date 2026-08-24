@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
-from pdf_processor import pdf_to_images, load_image_file
+from pdf_processor import pdf_to_images, tiff_to_images, load_image_file
 from ocr_engine import (
     init_vertex_ai,
     extract_invoice_data,
@@ -238,9 +238,9 @@ def main():
 
     uploaded_files = st.file_uploader(
         "請求書ファイルを選択してください（複数可）",
-        type=["pdf", "png", "jpg", "jpeg"],
+        type=["pdf", "png", "jpg", "jpeg", "tif", "tiff"],
         accept_multiple_files=True,
-        help="PDF、PNG、JPG形式に対応しています。複数ファイルを同時にアップロードできます。",
+        help="PDF、PNG、JPG、JPEG、TIF、TIFF形式に対応しています。複数ファイルを同時にアップロードできます。",
         key="invoice_file_uploader",
     )
 
@@ -250,10 +250,21 @@ def main():
         with st.expander("📷 アップロードファイル プレビュー", expanded=False):
             for uploaded_file in uploaded_files:
                 st.markdown(f"**{uploaded_file.name}**")
-                if uploaded_file.type == "application/pdf":
+                fname = uploaded_file.name.lower()
+                if fname.endswith(".pdf") or uploaded_file.type == "application/pdf":
                     st.markdown("📄 PDFファイル（OCR実行時にページ画像に変換されます）")
+                elif fname.endswith((".tif", ".tiff")) or uploaded_file.type in ("image/tiff", "image/tif"):
+                    try:
+                        tif_imgs = tiff_to_images(uploaded_file.read())
+                        uploaded_file.seek(0)
+                        st.markdown(f"🖼️ TIFFファイル ({len(tif_imgs)}ページ)")
+                        for pnum, timg in tif_imgs:
+                            st.image(timg, caption=f"ページ {pnum}", width=350)
+                    except Exception as e:
+                        st.warning(f"プレビュー表示エラー: {e}")
+                        uploaded_file.seek(0)
                 else:
-                    img = Image.open(uploaded_file)
+                    img = load_image_file(uploaded_file.read())
                     st.image(img, width=400)
                     uploaded_file.seek(0)
                 st.markdown("---")
@@ -280,9 +291,14 @@ def main():
         with st.spinner("📄 ファイルを処理中..."):
             for uploaded_file in uploaded_files:
                 file_bytes = uploaded_file.read()
+                fname = uploaded_file.name.lower()
 
-                if uploaded_file.type == "application/pdf":
+                if fname.endswith(".pdf") or uploaded_file.type == "application/pdf":
                     page_images = pdf_to_images(file_bytes)
+                    for page_num, img in page_images:
+                        all_images.append((f"{uploaded_file.name} - P{page_num}", img))
+                elif fname.endswith((".tif", ".tiff")) or uploaded_file.type in ("image/tiff", "image/tif"):
+                    page_images = tiff_to_images(file_bytes)
                     for page_num, img in page_images:
                         all_images.append((f"{uploaded_file.name} - P{page_num}", img))
                 else:
